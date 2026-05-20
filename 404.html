@@ -59,18 +59,18 @@
         </div>
         
         <div id="actions">
-            <button id="copy" onclick="copy()">复制</button>
-            <button id="delete" onclick="clearclipboard()">删除</button>
-            <button id="refresh" onclick="refresh()">刷新</button>
-            <button id="save" onclick="save()">保存</button>
-            <button id="set-password" onclick="setpassword()">设置密码</button>
-            <button id="set-ip-protect" onclick="setip()">设置IP保护</button>
-            <button id="set-time" onclick="settime()">设置过期时间</button>
-            <button id="raw" onclick="copyRaw()">复制raw地址</button>
-            
+            <button id="copy" onclick="copy()" data-insightflare-event="copy_click">复制</button>
+            <button id="delete" onclick="clearclipboard()" data-insightflare-event="delete_click">删除</button>
+            <button id="refresh" onclick="refresh()" data-insightflare-event="refresh_click">刷新</button>
+            <button id="save" onclick="save()" data-insightflare-event="save_click">保存</button>
+            <button id="set-password" onclick="setpassword()" data-insightflare-event="set_password_click">设置密码</button>
+            <button id="set-ip-protect" onclick="setip()" data-insightflare-event="set_ip_protect_click">设置IP保护</button>
+            <button id="set-time" onclick="settime()" data-insightflare-event="set_time_click">设置过期时间</button>
+            <button id="raw" onclick="copyRaw()" data-insightflare-event="copy_raw_click">复制raw地址</button>
+
             <!-- 添加图片上传按钮 -->
             <label for="image-upload" class="upload-btn">
-                <button>上传图片</button>
+                <button data-insightflare-event="image_upload_click">上传图片</button>
             </label>
             <input type="file" id="image-upload" accept="image/*" style="display:none">
         </div>

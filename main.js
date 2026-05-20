@@ -82,6 +82,7 @@ async function refresh(password = "") {
         document.querySelector("#ip-protect").innerHTML = "未设置";
         document.querySelector("#time").innerHTML = "未设置";
       } else if (data.message == "无效的密码") {
+        window.insightflare?.track("password_required");
         refresh(prompt("请输入密码"));
       } else {
         document.querySelector("#status").innerHTML = data.message;
@@ -93,6 +94,12 @@ async function refresh(password = "") {
 
         // 检查是否为图片
         handleTextChange();
+
+        window.insightflare?.track("clipboard_loaded", {
+          is_image: isBase64Image(data.data),
+          has_password: !!data.password,
+          has_ip_protect: !!(data.safeIP && data.safeIP !== "未设置"),
+        });
       }
       console.log(data);
     })
@@ -134,6 +141,9 @@ function save() {
     message("内容长度超过1MB，无法保存");
     document.querySelector("#status").innerHTML =
       "错误: 内容过长，请减少内容后再提交";
+    window.insightflare?.track("content_oversize", {
+      size_kb: Math.round(data.length / 1024),
+    });
     return; // 终止保存过程
   }
 
@@ -153,16 +163,25 @@ function save() {
 
   setClipboard(data, password, safeIP, expiredTime, uuid)
     .then((response) => response.json())
-    .then((data) => {
-      document.querySelector("#status").innerHTML = data.message;
-      document.querySelector("#password").innerHTML = data.password || "未设置";
-      document.querySelector("#ip-protect").innerHTML = data.safeIP || "未设置";
-      document.querySelector("#time").innerHTML = data.expiredAt || "未设置";
+    .then((result) => {
+      document.querySelector("#status").innerHTML = result.message;
+      document.querySelector("#password").innerHTML = result.password || "未设置";
+      document.querySelector("#ip-protect").innerHTML = result.safeIP || "未设置";
+      document.querySelector("#time").innerHTML = result.expiredAt || "未设置";
       message("保存成功");
+      window.insightflare?.track("save_success", {
+        is_image: isBase64Image(data),
+        has_password: !!result.password,
+        has_ip_protect: !!result.safeIP,
+        size_kb: Math.round(data.length / 1024),
+      });
     })
     .catch((error) => {
       document.querySelector("#status").innerHTML = "保存失败";
       console.error("保存过程出错:", error);
+      window.insightflare?.track("save_failed", {
+        error: String(error).slice(0, 100),
+      });
       alert("保存失败: " + error);
     });
 }
@@ -275,6 +294,10 @@ async function handleImageUpload(event) {
     // 检查文件大小（限制为5MB）
     if (file.size > 5 * 1024 * 1024) {
       message("图片过大，请选择5MB以下的图片");
+      window.insightflare?.track("image_oversize", {
+        size_kb: Math.round(file.size / 1024),
+        type: file.type,
+      });
       return;
     }
 
@@ -286,6 +309,11 @@ async function handleImageUpload(event) {
       message("图片转换后超过1MB，无法保存");
       document.querySelector("#status").innerHTML =
         "错误: 内容过长，请选择小一些的图片";
+      window.insightflare?.track("image_convert_oversize", {
+        file_kb: Math.round(file.size / 1024),
+        base64_kb: Math.round(base64.length / 1024),
+        type: file.type,
+      });
       return;
     }
 
@@ -297,10 +325,18 @@ async function handleImageUpload(event) {
 
     // 直接更新状态，不使用message函数临时显示
     document.querySelector("#status").innerHTML = "图片已添加，可以点击保存";
+
+    window.insightflare?.track("image_uploaded", {
+      size_kb: Math.round(file.size / 1024),
+      type: file.type,
+    });
   } catch (error) {
     console.error("处理图片失败:", error);
     document.querySelector("#status").innerHTML =
       "处理图片失败: " + error.message;
+    window.insightflare?.track("image_upload_failed", {
+      error: String(error.message || error).slice(0, 100),
+    });
   }
 }
 
