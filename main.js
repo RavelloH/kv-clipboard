@@ -3,6 +3,35 @@
 const KVCacheURL = "https://cache.ravelloh.top";
 // const KVCacheURL = "http://localhost:3000";
 
+const clipboardState = {
+  uuid: "",
+  password: "",
+  newPassword: undefined,
+  safeIP: "",
+  expiredAt: "",
+};
+
+function setText(selector, value = "") {
+  document.querySelector(selector).textContent = value ?? "";
+}
+
+function getText(selector) {
+  return document.querySelector(selector).textContent;
+}
+
+function setStatus(value) {
+  setText("#status", value);
+}
+
+function updateRecordInfo() {
+  const displayedPassword =
+    clipboardState.newPassword === undefined ? clipboardState.password : clipboardState.newPassword;
+  setText("#uuid", clipboardState.uuid);
+  setText("#password", displayedPassword || "未设置");
+  setText("#ip-protect", clipboardState.safeIP || "未设置");
+  setText("#time", clipboardState.expiredAt || "未设置");
+}
+
 async function stringToUUID(str) {
   // 将字符串转换为ArrayBuffer
   const encoder = new TextEncoder();
@@ -40,75 +69,87 @@ function copy() {
   message("复制成功");
 }
 
-function clearclipboard() {
-  deleteClipboard(document.querySelector("#uuid").innerHTML, "")
-    .then((response) => response.json())
-    .then((data) => {
-      document.querySelector("#status").innerHTML = data.message;
+async function clearclipboard() {
+  try {
+    const response = await deleteClipboard(clipboardState.uuid, clipboardState.password);
+    const data = await response.json();
+    if (!response.ok || data.code !== 200) {
+      setStatus(data.message || "删除失败");
+      return;
+    }
 
-      console.log(data);
-
-      window.location.reload();
-    })
-    .catch((error) => {
-      alert(error);
-    });
-}
-
-async function refresh(password = "") {
-  if (
-    password == "" &&
-    document.querySelector("#password").innerHTML !== "..." &&
-    document.querySelector("#password").innerHTML !== "未设置"
-  ) {
-    password = document.querySelector("#password").innerHTML;
+    clipboardState.password = "";
+    clipboardState.newPassword = undefined;
+    clipboardState.safeIP = "";
+    clipboardState.expiredAt = "";
+    document.querySelector("textarea").value = "";
+    closeImagePreview();
+    await refresh("");
+  } catch (error) {
+    setStatus(`删除失败: ${error.message || error}`);
   }
-  // 预先检查
-  document.querySelector("#name").innerHTML = window.location.pathname.replace(
-    "/",
-    ""
-  );
-  // 生成uuid
-  const uuid = (
-    await stringToUUID(window.location.pathname.replace("/", ""))
-  ).substring(0, 36);
-  document.querySelector("#uuid").innerHTML = uuid;
-  getClipboard(uuid, password, false)
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.message == "未找到数据") {
-        document.querySelector("#status").innerHTML = "无内容，请在下方编辑";
-        document.querySelector("#password").innerHTML = "未设置";
-        document.querySelector("#ip-protect").innerHTML = "未设置";
-        document.querySelector("#time").innerHTML = "未设置";
-      } else if (data.message == "无效的密码") {
-        window.insightflare?.track("password_required");
-        refresh(prompt("请输入密码"));
-      } else {
-        document.querySelector("#status").innerHTML = data.message;
-        document.querySelector("textarea").value = data.data;
-        document.querySelector("#password").innerHTML =
-          data.password || "未设置";
-        document.querySelector("#ip-protect").innerHTML = data.safeIP;
-        document.querySelector("#time").innerHTML = data.expiredAt;
-
-        // 检查是否为图片
-        handleTextChange();
-
-        window.insightflare?.track("clipboard_loaded", {
-          is_image: isBase64Image(data.data),
-          has_password: !!data.password,
-          has_ip_protect: !!(data.safeIP && data.safeIP !== "未设置"),
-        });
-      }
-      console.log(data);
-    })
-    .catch((error) => {
-      alert(error);
-    });
 }
 
-function setClipboard(data, password, safeIP, expiredTime, uuid) {
+async function refresh(password = clipboardState.password) {
+  const requestedPassword = typeof password === "string" ? password : "";
+  const name = window.location.pathname.replace(/^\//, "");
+  setText("#name", name);
+
+  clipboardState.uuid = (await stringToUUID(name)).substring(0, 36);
+  setText("#uuid", clipboardState.uuid);
+
+  try {
+    const response = await getClipboard(clipboardState.uuid, requestedPassword, false);
+    const data = await response.json();
+
+    if (data.code === 404) {
+      clipboardState.password = "";
+      clipboardState.newPassword = undefined;
+      clipboardState.safeIP = "";
+      clipboardState.expiredAt = "";
+      updateRecordInfo();
+      setStatus("无内容，请在下方编辑");
+      return;
+    }
+
+    if (data.code === 401) {
+      window.insightflare?.track("password_required");
+      const enteredPassword = prompt("请输入密码");
+      if (enteredPassword === null) {
+        setStatus("需要密码才能读取此剪贴板");
+        return;
+      }
+      await refresh(enteredPassword);
+      return;
+    }
+
+    if (!response.ok || data.code !== 200) {
+      setStatus(data.message || "读取失败");
+      return;
+    }
+
+    clipboardState.password = data.password || "";
+    clipboardState.newPassword = undefined;
+    clipboardState.safeIP = data.safeIP || "";
+    clipboardState.expiredAt = data.expiredAt || "";
+    updateRecordInfo();
+    setStatus(data.message);
+    document.querySelector("textarea").value = data.data;
+
+    // 检查是否为图片
+    handleTextChange();
+
+    window.insightflare?.track("clipboard_loaded", {
+      is_image: isBase64Image(data.data),
+      has_password: !!data.password,
+      has_ip_protect: !!(data.safeIP && data.safeIP !== "*.*.*.*"),
+    });
+  } catch (error) {
+    setStatus(`读取失败: ${error.message || error}`);
+  }
+}
+
+function setClipboard(data, { password, newPassword, safeIP, expiredTime, uuid }) {
   // 处理 expiredTime，支持 ISO 字符串或毫秒数
   let expiredMs = expiredTime;
   if (typeof expiredTime === "string" && !/^\d+$/.test(expiredTime)) {
@@ -118,72 +159,70 @@ function setClipboard(data, password, safeIP, expiredTime, uuid) {
     if (expiredMs < 0) expiredMs = 0;
   }
 
+  const body = { data, safeIP, expiredTime: expiredMs, uuid };
+  if (password) body.password = password;
+  if (newPassword !== undefined) body.newPassword = newPassword;
+
   return fetch(`${KVCacheURL}/api?mode=set`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      data: data,
-      password: password,
-      safeIP: safeIP,
-      expiredTime: expiredMs,
-      uuid: uuid,
-    }),
+    body: JSON.stringify(body),
   });
 }
 
-function save() {
+async function save() {
   const data = document.querySelector("textarea").value;
 
   // 检查内容长度是否超过1MB
-  if (data.length > 1024 * 1024) {
+  const dataSize = new TextEncoder().encode(data).byteLength;
+  if (dataSize > 1024 * 1024) {
     message("内容长度超过1MB，无法保存");
-    document.querySelector("#status").innerHTML =
-      "错误: 内容过长，请减少内容后再提交";
+    setStatus("错误: 内容过长，请减少内容后再提交");
     window.insightflare?.track("content_oversize", {
-      size_kb: Math.round(data.length / 1024),
+      size_kb: Math.round(dataSize / 1024),
     });
     return; // 终止保存过程
   }
 
-  const password = document
-    .querySelector("#password")
-    .innerHTML.replace("未设置", "");
-  const safeIP = document
-    .querySelector("#ip-protect")
-    .innerHTML.replace("未设置", "");
-  const expiredTime = document
-    .querySelector("#time")
-    .innerHTML.replace("未设置", 365 * 24 * 60 * 60 * 1000);
-  const uuid = document.querySelector("#uuid").innerHTML;
+  const expiredTime = clipboardState.expiredAt || 365 * 24 * 60 * 60 * 1000;
+  setStatus("正在保存...");
 
-  // 状态提示
-  document.querySelector("#status").innerHTML = "正在保存...";
-
-  setClipboard(data, password, safeIP, expiredTime, uuid)
-    .then((response) => response.json())
-    .then((result) => {
-      document.querySelector("#status").innerHTML = result.message;
-      document.querySelector("#password").innerHTML = result.password || "未设置";
-      document.querySelector("#ip-protect").innerHTML = result.safeIP || "未设置";
-      document.querySelector("#time").innerHTML = result.expiredAt || "未设置";
-      message("保存成功");
-      window.insightflare?.track("save_success", {
-        is_image: isBase64Image(data),
-        has_password: !!result.password,
-        has_ip_protect: !!result.safeIP,
-        size_kb: Math.round(data.length / 1024),
-      });
-    })
-    .catch((error) => {
-      document.querySelector("#status").innerHTML = "保存失败";
-      console.error("保存过程出错:", error);
-      window.insightflare?.track("save_failed", {
-        error: String(error).slice(0, 100),
-      });
-      alert("保存失败: " + error);
+  try {
+    const response = await setClipboard(data, {
+      password: clipboardState.password,
+      newPassword: clipboardState.newPassword,
+      safeIP: clipboardState.safeIP,
+      expiredTime,
+      uuid: clipboardState.uuid,
     });
+    const result = await response.json();
+    if (!response.ok || result.code !== 200) {
+      throw new Error(result.message || "保存失败");
+    }
+
+    clipboardState.password = result.password || "";
+    clipboardState.newPassword = undefined;
+    clipboardState.safeIP = result.safeIP || "";
+    clipboardState.expiredAt = result.expiredAt || "";
+    updateRecordInfo();
+    setStatus(result.message);
+    message("保存成功");
+    window.insightflare?.track("save_success", {
+      is_image: isBase64Image(data),
+      has_password: !!result.password,
+      has_ip_protect: !!(result.safeIP && result.safeIP !== "*.*.*.*"),
+      size_kb: Math.round(dataSize / 1024),
+    });
+  } catch (error) {
+    const errorMessage = error.message || String(error);
+    setStatus(`保存失败: ${errorMessage}`);
+    console.error("保存过程出错:", error);
+    window.insightflare?.track("save_failed", {
+      error: errorMessage.slice(0, 100),
+    });
+  }
 }
 
 function getClipboard(uuid, password, shouldDelete) {
@@ -201,14 +240,15 @@ function getClipboard(uuid, password, shouldDelete) {
 }
 
 function deleteClipboard(uuid, password) {
+  const body = { uuid };
+  if (password) body.password = password;
+
   return fetch(`${KVCacheURL}/api?mode=del`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      uuid: uuid,
-    }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -289,7 +329,7 @@ async function handleImageUpload(event) {
   if (!file) return;
 
   try {
-    document.querySelector("#status").innerHTML = "正在处理图片...";
+    setStatus("正在处理图片...");
 
     // 检查文件大小（限制为5MB）
     if (file.size > 5 * 1024 * 1024) {
@@ -307,8 +347,7 @@ async function handleImageUpload(event) {
     // 检查Base64内容长度是否超过1MB
     if (base64.length > 1024 * 1024) {
       message("图片转换后超过1MB，无法保存");
-      document.querySelector("#status").innerHTML =
-        "错误: 内容过长，请选择小一些的图片";
+      setStatus("错误: 内容过长，请选择小一些的图片");
       window.insightflare?.track("image_convert_oversize", {
         file_kb: Math.round(file.size / 1024),
         base64_kb: Math.round(base64.length / 1024),
@@ -324,7 +363,7 @@ async function handleImageUpload(event) {
     showImagePreview(base64);
 
     // 直接更新状态，不使用message函数临时显示
-    document.querySelector("#status").innerHTML = "图片已添加，可以点击保存";
+    setStatus("图片已添加，可以点击保存");
 
     window.insightflare?.track("image_uploaded", {
       size_kb: Math.round(file.size / 1024),
@@ -332,8 +371,7 @@ async function handleImageUpload(event) {
     });
   } catch (error) {
     console.error("处理图片失败:", error);
-    document.querySelector("#status").innerHTML =
-      "处理图片失败: " + error.message;
+    setStatus("处理图片失败: " + error.message);
     window.insightflare?.track("image_upload_failed", {
       error: String(error.message || error).slice(0, 100),
     });
@@ -377,43 +415,55 @@ async function main() {
 }
 
 function message(message) {
-  const origin = document.querySelector("#status").innerHTML;
-  document.querySelector("#status").innerHTML = message;
+  const origin = getText("#status");
+  setStatus(message);
   setTimeout(() => {
-    document.querySelector("#status").innerHTML = origin;
+    setStatus(origin);
   }, 2000);
 }
 
 function setpassword() {
-  document.querySelector("#password").innerHTML = prompt("请输入密码");
+  const newPassword = prompt("请输入密码（留空可移除密码）");
+  if (newPassword === null) return;
+
+  clipboardState.newPassword = newPassword;
+  updateRecordInfo();
 }
 
 function setip() {
   fetch("https://ip.api.ravelloh.top")
     .then((response) => response.json())
     .then((data) => {
-      document.querySelector("#ip-protect").innerHTML = prompt(
-        `请输入IP(当前IP为${data.ip})`
-      );
-    });
+      const safeIP = prompt(`请输入IP(当前IP为${data.ip})`, clipboardState.safeIP);
+      if (safeIP === null) return;
+
+      clipboardState.safeIP = safeIP;
+      updateRecordInfo();
+    })
+    .catch((error) => setStatus(`获取当前IP失败: ${error.message || error}`));
 }
 
 function settime() {
-  let hour = prompt("请输入过期时间(单位为小时)");
-  document.querySelector("#time").innerHTML = new Date(
-    Date.now() + hour * 60 * 60 * 1000
-  ).toISOString();
+  const input = prompt("请输入过期时间(单位为小时)");
+  if (input === null) return;
+
+  const hours = Number(input);
+  const milliseconds = hours * 60 * 60 * 1000;
+  if (!Number.isFinite(hours) || milliseconds < 60_000) {
+    setStatus("过期时间必须不少于 1 分钟");
+    return;
+  }
+
+  clipboardState.expiredAt = new Date(Date.now() + milliseconds).toISOString();
+  updateRecordInfo();
 }
 
 function copyRaw() {
-  navigator.clipboard.writeText(
-    `${KVCacheURL}?uuid=${document.querySelector("#uuid").innerHTML}${
-      document.querySelector("#password").innerHTML !== "未设置" &&
-      document.querySelector("#password").innerHTML !== ""
-        ? `&password=${document.querySelector("#password").innerHTML}`
-        : ""
-    }`
-  );
+  const rawURL = new URL(KVCacheURL);
+  rawURL.searchParams.set("uuid", clipboardState.uuid);
+  if (clipboardState.password) rawURL.searchParams.set("password", clipboardState.password);
+
+  navigator.clipboard.writeText(rawURL.toString());
   message("已复制");
 }
 main();
